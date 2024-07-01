@@ -1,0 +1,169 @@
+#pragma kernel CSMain
+#pragma kernel CSStamp
+#pragma kernel CSClear
+
+
+RWTexture2D<float4> RenderTexture;
+Texture2D<float4> StampTexture : register(t0);
+
+struct StampData
+{
+    float2 position;
+    float4 color;
+    float size;
+    float2 resolution;
+    float rotation;
+};
+
+
+struct DrawData
+{
+    float2 position;
+    float4 color; 
+    float radius;
+};
+
+
+StructuredBuffer<DrawData> drawData;
+StructuredBuffer<StampData> stampData;
+
+
+int width;
+int height;
+
+
+int drawDataLength;
+int stampDataLength;
+SamplerState samplerLinearClamp : register(s0);
+SamplerState sampler_StampTexture;
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = id.xy / float2(width, height);
+    float4 currentColor = RenderTexture[id.xy];
+
+    // Loop through all draw commands
+    for (int i = 0; i < drawDataLength; i++)
+    {
+        float2 pos = drawData[i].position;
+        float4 col = drawData[i].color;
+        float rad = drawData[i].radius;
+        float dist = distance(uv, pos);
+
+        if (dist < rad)
+        {  
+            currentColor = col;
+            /*
+        // Simple blending: linear interpolation based on distance
+            float blendFactor = 1.0 - (dist / rad);
+            float4 blendedColor = col;
+            blendedColor.a = col.a * blendFactor;
+
+        // Additive blending
+            float alpha = blendedColor.a;
+            currentColor.rgb = currentColor.rgb * (1.0 - alpha) + blendedColor.rgb * alpha;
+            currentColor.a = currentColor.a + alpha * (1.0 - currentColor.a); // Increase opacity 
+            */
+            //float blendFactor = 1.8 - (dist / rad);
+            //float4 blendedColor = col;
+            //blendedColor.a = col.a * blendFactor;
+            //
+            //
+            //float alpha = blendedColor.a;
+            //currentColor.rgb = currentColor.rgb * (1.0 - alpha) + blendedColor.rgb * alpha;
+            //currentColor.a = max(blendedColor.a, currentColor.a); //currentColor.a + alpha * (1.0 - currentColor.a); // Increase opacity 
+            
+            //float falloff = 1-(dist / rad);
+            //currentColor.rgb = min(col.rgb, float3(1, 1, 1));
+            //currentColor.a = max(min(falloff,col.a), currentColor.a);
+            
+            
+            //if (currentColor.a < 1)
+            //{
+            //    
+            //    //Limit the blended color's alpha so the total does not exceed 1
+            //    float maxAddableAlpha = 1.0 - currentColor.a;
+            //    float alpha = min(blendedColor.a, maxAddableAlpha);
+            //    
+            //    // Additive blending with the new limited alpha
+            //    currentColor.rgb = currentColor.rgb * (1.0 - alpha) + blendedColor.rgb * alpha;
+            //    currentColor.a = currentColor.a + alpha; // Increase opacity up to a max of 1
+            //    
+            //    //float alpha = blendedColor.a;
+            //    //currentColor.rgb = col; //currentColor.rgb * (1.0 - alpha) + blendedColor.rgb * alpha;
+            //    //currentColor.a = max(blendedColor.a, currentColor.a); //currentColor.a + alpha * (1.0 - currentColor.a); // Increase opacity 
+            //
+            //}
+        }  
+    }
+    RenderTexture[id.xy] = currentColor;
+}
+
+[numthreads(8, 8, 1)]
+void CSStamp(uint3 id : SV_DispatchThreadID)
+{
+    float2 uv = id.xy / float2(width, height);
+    float4 currentColor = RenderTexture[id.xy];
+
+    // Loop through all draw commands
+    for (int i = 0; i < stampDataLength; i++)
+    {
+        float2 pos = stampData[i].position;
+        float stampSize = stampData[i].size;
+        float stampRotation = stampData[i].rotation;
+        float2 stampResolution = stampData[i].resolution;
+
+        // Calculate aspect ratio of the stamp texture and the render texture
+        float stampAspectRatio = stampResolution.x / stampResolution.y;
+        float renderAspectRatio = float(width) / float(height);
+
+        float2 relativeUV = (uv - pos) / stampSize;
+
+        // Adjust relativeUV to maintain the stamp texture's aspect ratio
+        if (renderAspectRatio > stampAspectRatio)
+        {
+            relativeUV.x *= renderAspectRatio / stampAspectRatio;
+        }
+        else
+        {
+            relativeUV.y *= stampAspectRatio / renderAspectRatio;
+        }
+
+        // Rotate UV coordinates
+        float cosTheta = cos(stampRotation);
+        float sinTheta = sin(stampRotation);
+
+        float2 rotatedUV = float2(
+            cosTheta * relativeUV.x - sinTheta * relativeUV.y,
+            sinTheta * relativeUV.x + cosTheta * relativeUV.y
+        );
+
+        float2 stampUV = 0.5 + rotatedUV;
+
+        if (stampUV.x >= 0 && stampUV.x <= 1 && stampUV.y >= 0 && stampUV.y <= 1)
+        {
+            int2 stampTexel = int2(stampUV * stampResolution);
+            float4 stampColor = StampTexture.Load(int3(stampTexel, 0));
+
+            
+            
+            stampColor.rgb = stampData[i].color;
+            
+            // Blending
+            float alpha = stampColor.a;
+            currentColor.rgb = currentColor.rgb * (1.0 - alpha) + stampColor.rgb * alpha;
+            currentColor.a = max(currentColor.a, alpha); // Ensure the new color is more opaque
+
+            
+        }      
+    }
+
+    RenderTexture[id.xy] = currentColor;
+}
+
+[numthreads(8, 8, 1)]
+void CSClear(uint3 id : SV_DispatchThreadID)
+{     
+    RenderTexture[id.xy] = float4(0, 0, 0, 0);
+}
